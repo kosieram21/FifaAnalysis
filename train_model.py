@@ -1,9 +1,14 @@
 from sklearn import metrics
 from sklearn.model_selection import train_test_split
-from sklearn.tree import DecisionTreeRegressor
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LinearRegression
 from sklearn.feature_selection import RFE
+import matplotlib.pyplot as plt
+import pandas as pd
 import database_connection
+
+
+TRAIN_SIZE = 0.80
+RANDOM_STATE = 25
 
 
 def get_x_dictionary(cursor):
@@ -51,24 +56,74 @@ def get_data_set(cursor):
     return x, y
 
 
+def model_performance(num_features, x, y):
+    x_train, x_test, y_train, y_test = train_test_split(x, y, train_size=TRAIN_SIZE, random_state=RANDOM_STATE)
+
+    model = LinearRegression()
+    rfe = RFE(model, n_features_to_select=num_features)
+    rfe.fit(x, y)
+
+    reduced_x_train = rfe.transform(x_train)
+    reduced_x_test = rfe.transform(x_test)
+
+    model.fit(reduced_x_train, y_train)
+    y_prediction = model.predict(reduced_x_test)
+    error = round(metrics.mean_absolute_error(y_test, y_prediction), 2)
+
+    return error
+
+
+def find_optimal_number_of_features(model_performances):
+    best = 0
+    for i in range(len(model_performances)):
+        if model_performances[i] < model_performances[best]:
+            best = i
+    return best + 1
+
+
+def optimal_model_results(model_performances, x, y):
+    optimal_number_of_features = find_optimal_number_of_features(model_performances)
+    x_train, x_test, y_train, y_test = train_test_split(x, y, train_size=TRAIN_SIZE, random_state=RANDOM_STATE)
+
+    model = LinearRegression()
+    rfe = RFE(model, n_features_to_select=optimal_number_of_features)
+    rfe.fit(x, y)
+
+    reduced_x_train = rfe.transform(x_train)
+    reduced_x_test = rfe.transform(x_test)
+
+    model.fit(reduced_x_train, y_train)
+    y_prediction = model.predict(reduced_x_test)
+
+    return y_test, y_prediction
+
+
 def execute(db):
     connection = database_connection.create_database_connection(db)
     cursor = connection.cursor()
 
     x, y = get_data_set(cursor)
-    x_train, x_test, y_train, y_test = train_test_split(x, y, train_size=0.80)
 
-    #model = DecisionTreeRegressor()
-    model = LogisticRegression()
-    rfe = RFE(model, n_features_to_select=4)
-    rfe.fit(x, y)
-    print(rfe.ranking_)
+    num_features = []
+    model_performances = []
+    for i in range(len(x[0])):
+        num_features.append(i + 1)
+        model_performances.append(model_performance(num_features[i], x, y))
 
-    model.fit(x_train, y_train)
-    y_prediction = model.predict(x_test)
-    print(metrics.mean_absolute_error(y_test, y_prediction))
-    for i in range(len(y_test)):
-        print(f"{i}: {y_test[i]} {y_prediction[i]}")
+    df = pd.DataFrame(list(zip(num_features, model_performances)),
+                      columns=['number of features', 'mean absolute error'])
+    df.plot(kind='scatter', x='number of features', y='mean absolute error',
+            title="number of features vs model performance")
+    plt.show()
+
+    y_test, y_prediction = optimal_model_results(model_performances, x, y)
+
+    df = pd.DataFrame(list(zip(y_test, y_prediction)),
+                      columns=['actual win score', 'predicted win score'])
+    df.plot(kind='scatter', x='actual win score', y='predicted win score',
+            title="actual win score vs predicted win score")
+    plt.plot([0, 13], [0, 13], 'r')
+    plt.show()
 
     cursor.close()
     connection.close()
